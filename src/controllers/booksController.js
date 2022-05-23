@@ -3,6 +3,8 @@ const moment = require('moment')
 const userModel = require('../models/userModel')
 const reviewModel = require('../models/reviewModel')
 const booksModel = require('../models/booksModel')
+const aws = require('aws-sdk')
+const { uploadFile } = require('../controllers/awsUpload')
 
 
 //========================================VALIDATION FUNCTIONS==========================================================
@@ -31,25 +33,12 @@ const createBooks = async function (req, res) {
 
     const { title, excerpt, ISBN, releasedAt, userId, category, subcategory } = req.body
 
-    if (!userId) {
-      return res.status(400).send({ status: false, message: 'user Id is must be present !!!!!!!' });
-
-    }
-    if (!isValidObjectId(userId)) {
-      return res.status(400).send({ status: false, message: "userId  is not valid !!!!!!" });
-
-    }
-    if (decodedToken.userId != userId) {
-      return res.status(403).send({ status: false, message: 'unauthorized access' });
-
-    }
+    let files = req.files
 
     const ISBN_ValidatorRegEx = /^(?=(?:\D*\d){10}(?:(?:\D*\d){3})?$)[\d-]+$/;
 
-    // const releasedAt_ValidatorRegEx = /^(?:(?:31(\/|-|\.)(?:0?[13578]|1[02]|(?:Jan|Mar|May|Jul|Aug|Oct|Dec)))\1|(?:(?:29|30)(\/|-|\.)(?:0?[1,3-9]|1[0-2]|(?:Jan|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec))\2))(?:(?:1[6-9]|[2-9]\d)?\d{2})$|^(?:29(\/|-|\.)(?:0?2|(?:Feb))\3(?:(?:(?:1[6-9]|[2-9]\d)?(?:0[48]|[2468][048]|[13579][26])|(?:(?:16|[2468][048]|[3579][26])00))))$|^(?:0?[1-9]|1\d|2[0-8])(\/|-|\.)(?:(?:0?[1-9]|(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep))|(?:1[0-2]|(?:Oct|Nov|Dec)))\4(?:(?:1[6-9]|[2-9]\d)?\d{2})$/;
-    
-    const releasedAt_ValidatorRegEx = /^\d{4}\-(0[1-9]|1[012])\-(0[1-9]|[12][0-9]|3[01])$/
-    
+    const releasedAt_ValidatorRegEx = /^(?:(?:31(\/|-|\.)(?:0?[13578]|1[02]|(?:Jan|Mar|May|Jul|Aug|Oct|Dec)))\1|(?:(?:29|30)(\/|-|\.)(?:0?[1,3-9]|1[0-2]|(?:Jan|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec))\2))(?:(?:1[6-9]|[2-9]\d)?\d{2})$|^(?:29(\/|-|\.)(?:0?2|(?:Feb))\3(?:(?:(?:1[6-9]|[2-9]\d)?(?:0[48]|[2468][048]|[13579][26])|(?:(?:16|[2468][048]|[3579][26])00))))$|^(?:0?[1-9]|1\d|2[0-8])(\/|-|\.)(?:(?:0?[1-9]|(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep))|(?:1[0-2]|(?:Oct|Nov|Dec)))\4(?:(?:1[6-9]|[2-9]\d)?\d{2})$/;
+
     if (!isValidRequestBody(data)) {
       return res.status(400).send({ status: false, message: "Body is required" })
     }
@@ -58,8 +47,40 @@ const createBooks = async function (req, res) {
       return res.status(400).send({ status: false, message: "isDeleted must be false" })
     }
 
-    if (!isValid(title)) {
-      return res.status(400).send({ status: false, message: "Title is required" })
+    if (!userId) {
+      return res.status(400).send({ status: false, message: 'user Id is must be present !!!!!!!' });
+    }
+
+    if (!isValidObjectId(userId)) {
+      return res.status(400).send({ status: false, message: "userId  is not valid !!!!!!" });
+    }
+
+    /* if (decodedToken.userId != userId) {
+       return res.status(403).send({ status: false, message: 'unauthorized access' });
+     }*/
+
+    if (!isValid(excerpt)) {
+      return res.status(400).send({ status: false, message: "excerpt is required" })
+    }
+
+    if (!isValid(ISBN)) {
+      return res.status(400).send({ status: false, message: "ISBN is required..." })
+    }
+
+    if (!isValid(category)) {
+      return res.status(400).send({ status: false, message: "Category is required..." })
+    }
+
+    if (!subcategory) {
+      return res.status(400).send({ status: false, message: "subcategory is required..." })
+    }
+
+    if (!releasedAt) {
+      return res.status(400).send({ status: false, message: "Please provide released-date" });
+    }
+
+    if (files && files.length == 0) {
+      return res.status(400).send({ msg: "No file found" })
     }
 
     let isRegisteredTitle = await booksModel.findOne({ title }).lean();
@@ -68,18 +89,10 @@ const createBooks = async function (req, res) {
       return res.status(400).send({ status: false, message: "Title already registered" });
     }
 
-    if (!isValid(excerpt)) {
-      return res.status(400).send({ status: false, message: "excerpt is required" })
-    }
-
     let validationUserId = await userModel.findById(userId).lean();
 
     if (!validationUserId) {
       return res.status(400).send({ status: false, message: "User is not registered ... ", });
-    }
-
-    if (!isValid(ISBN)) {
-      return res.status(400).send({ status: false, message: "ISBN is required..." })
     }
 
     let isRegisteredISBN = await booksModel.findOne({ ISBN }).lean();
@@ -92,20 +105,10 @@ const createBooks = async function (req, res) {
       return res.status(400).send({ status: false, message: "plz enter a valid 13 digit ISBN No." });
     }
 
-    if (!isValid(category)) {
-      return res.status(400).send({ status: false, message: "Category is required..." })
-    }
-    if (!subcategory) {
-      return res.status(400).send({ status: false, message: "subcategory is required..." })
-    }
-
-    if (!Array.isArray(subcategory)) {
-      return res.status(400).send({ status: false, message: "Subcategory is must be an array of String" })
-    }
-
+    const subcategory1 = subcategory.split(",")
     let validSubcategory = true;
 
-    const checkTypeofSubcategory = subcategory.map(x => {
+    const checkTypeofSubcategory = subcategory1.map(x => {
       if (typeof x != "string" || x.trim().length == 0) {
         validSubcategory = false
       }
@@ -114,14 +117,14 @@ const createBooks = async function (req, res) {
     if (validSubcategory == false) {
       return res.status(400).send({ status: false, message: "Subcategory is not valid..." })
     }
-
-    if (!releasedAt) {
-      return res.status(400).send({ status: false, message: "Please provide released-date" });
-    }
+    data.subcategory = subcategory1
 
     if (!releasedAt_ValidatorRegEx.test(releasedAt)) {
       return res.status(400).send({ status: false, message: "plz enter a valid Date format" });
     }
+
+    let uploadedFileURL = await uploadFile(files[0])
+    data.bookCover = uploadedFileURL
 
     let bookCreated = await booksModel.create(data)
 
@@ -158,13 +161,13 @@ const GetFilteredBook = async function (req, res) {
 
     obj.isDeleted = false;
 
-    const bookData = await booksModel.find(obj).sort({ title: 1 }).select({ __v: 0, ISBN: 0,  subcategory: 0, isDeleted: 0, createdAt: 0, updatedAt: 0, deletedAt: 0, }).lean()
+    const bookData = await booksModel.find(obj).sort({ title: 1 }).select({ __v: 0, ISBN: 0, subcategory: 0, isDeleted: 0, createdAt: 0, updatedAt: 0, deletedAt: 0, }).lean()
 
     if (bookData.length == 0) {
       return res.status(404).send({ status: false, message: "No Books found" })
     }
 
-    return res.status(200).send({ status: true,  message: 'Success', data: bookData })
+    return res.status(200).send({ status: true, message: 'Success', data: bookData })
 
   } catch (err) {
     res.status(500).send({ status: false, error: err.message });
@@ -196,7 +199,7 @@ const getBooksById = async function (req, res) {
 
     isbookIdInDB["reviewsData"] = reviewByBookId
 
-    return res.status(200).send({ status: true, message: "Success",  message: 'Books list', data: isbookIdInDB })
+    return res.status(200).send({ status: true, message: "Success", message: 'Books list', data: isbookIdInDB })
 
 
   }
@@ -222,7 +225,7 @@ const updateByBookId = async function (req, res) {
     const ISBN_ValidatorRegEx = /^(?=(?:\D*\d){10}(?:(?:\D*\d){3})?$)[\d-]+$/;
 
     // const releasedAt_ValidatorRegEx = /^(?:(?:31(\/|-|\.)(?:0?[13578]|1[02]|(?:Jan|Mar|May|Jul|Aug|Oct|Dec)))\1|(?:(?:29|30)(\/|-|\.)(?:0?[1,3-9]|1[0-2]|(?:Jan|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec))\2))(?:(?:1[6-9]|[2-9]\d)?\d{2})$|^(?:29(\/|-|\.)(?:0?2|(?:Feb))\3(?:(?:(?:1[6-9]|[2-9]\d)?(?:0[48]|[2468][048]|[13579][26])|(?:(?:16|[2468][048]|[3579][26])00))))$|^(?:0?[1-9]|1\d|2[0-8])(\/|-|\.)(?:(?:0?[1-9]|(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep))|(?:1[0-2]|(?:Oct|Nov|Dec)))\4(?:(?:1[6-9]|[2-9]\d)?\d{2})$/;
-   
+
     const releasedAt_ValidatorRegEx = /^\d{4}\-(0[1-9]|1[012])\-(0[1-9]|[12][0-9]|3[01])$/
 
     if (!isValidRequestBody(data)) {
@@ -258,7 +261,7 @@ const updateByBookId = async function (req, res) {
       return res.status(400).send({ status: false, message: "ISBN already registered" });
     }
 
-    if ( ISBN && !ISBN_ValidatorRegEx.test(ISBN)) {
+    if (ISBN && !ISBN_ValidatorRegEx.test(ISBN)) {
       return res.status(400).send({ status: false, message: "plz enter a valid 13 digit ISBN No." });
     }
 

@@ -18,6 +18,7 @@ userId:{
     required:true,
     ref:"User"
 },
+bookCover:String,
 ISBN:{
     type:String,
     required: true,
@@ -53,7 +54,7 @@ releasedAt:{
     required: true,
     trim:true
 },
-bookCover:String,
+
 
 },{timestamps:true})
 module.exports = mongoose.model("Books", booksSchema)
